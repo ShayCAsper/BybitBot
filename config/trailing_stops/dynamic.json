@@ -1,0 +1,16 @@
+{
+  "trailing_stop": {
+    "enabled": true,
+    "type": "dynamic",
+    "activation_profit": 0.01,
+    "step": 0.001,
+    "breakeven_enabled": true,
+    "breakeven_trigger": 0.005,
+    "partial_close_enabled": true,
+    "partial_close_levels": [
+      {"profit": 0.02, "close_percentage": 0.25},
+      {"profit": 0.04, "close_percentage": 0.25},
+      {"profit": 0.06, "close_percentage": 0.25}
+    ]
+  }
+}

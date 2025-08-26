@@ -1,0 +1,41 @@
+{
+  "advanced_scalping": {
+    "enabled": true,
+    "coins": [
+      "BTC",
+      "ETH"
+    ],
+    "spread_scalping": {
+      "min_spread": 5e-05,
+      "max_spread": 0.0002,
+      "spread_entry_ratio": 0.3,
+      "enabled": true
+    },
+    "orderbook_scalping": {
+      "imbalance_threshold": 0.65,
+      "depth_levels": 20,
+      "volume_multiplier": 2.0,
+      "liquidity_threshold": 10000,
+      "enabled": true
+    },
+    "ma_gap_scalping": {
+      "ma_period": 20,
+      "gap_threshold": 0.0015,
+      "gap_close_target": 0.5,
+      "momentum_filter": true,
+      "enabled": true
+    },
+    "risk_management": {
+      "max_position_time": 300,
+      "quick_profit": 0.0015,
+      "tight_stop": 0.001,
+      "position_size_multiplier": 0.5
+    },
+    "execution": {
+      "use_limit_orders": true,
+      "order_timeout": 60,
+      "partial_fill_accept": true,
+      "slippage_tolerance": 0.0005
+    }
+  }
+}

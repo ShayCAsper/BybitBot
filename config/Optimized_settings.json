@@ -1,0 +1,41 @@
+{
+  "exchange": {
+    "symbols": ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"],
+    "default_leverage": 10,
+    "min_order_sizes": {
+      "BTC": 0.001,
+      "ETH": 0.01,
+      "SOL": 0.1
+    }
+  },
+  
+  "risk": {
+    "max_position_size": 0.05,
+    "risk_per_trade": 0.02,
+    "max_positions": 3,
+    "max_daily_loss": 0.05,
+    "max_drawdown": 0.15,
+    "trailing_stop": {
+      "enabled": true,
+      "activation_profit": 0.01,
+      "trail_distance": 0.01
+    }
+  },
+  
+  "strategies": {
+    "active": ["momentum", "mean_reversion"],
+    "momentum": {
+      "momentum_threshold": 0.005,
+      "lookback_short": 10,
+      "lookback_long": 30
+    },
+    "mean_reversion": {
+      "std_threshold": 1.5,
+      "lookback": 20
+    },
+    "scalping": {
+      "min_spread": 0.00005,
+      "max_spread": 0.002
+    }
+  }
+}
