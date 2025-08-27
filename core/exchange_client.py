@@ -1,12 +1,16 @@
 import os, time, asyncio, json
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Tuple
 from loguru import logger
 import ccxt.async_support as ccxt  # async ccxt
 
 class ExchangeClient:
     """
-    Thin async wrapper around ccxt.bybit with Bybit v5-friendly params.
-    Includes robust order placement with tpslMode, price-band clamp, and positionIdx retry.
+    Async wrapper around ccxt.bybit (v5).
+    - Sandbox toggle, One-Way position mode
+    - Price & orderbook, spread/depth metrics
+    - Robust order placement with tpslMode, price-band clamp, positionIdx retry
+    - Post-only maker preference for non-scalp
+    - Helpers: has_open_position, reduce_position
     """
     def __init__(self, config):
         self.config = config
@@ -27,7 +31,6 @@ class ExchangeClient:
         await self.exchange.load_markets()
         logger.info(f"Markets loaded: {len(self.exchange.markets)}")
 
-        # Balance (safe log)
         try:
             bal = await self.exchange.fetch_balance()
             usdt = bal.get("USDT", {}).get("total") or bal.get("USDT", {}).get("free")
@@ -61,6 +64,17 @@ class ExchangeClient:
             logger.error(f"fetch_order_book error {symbol}: {e}")
             return {"bids": [], "asks": []}
 
+    async def get_spread_metrics(self, symbol: str) -> Tuple[float, float, float]:
+        ob = await self.fetch_order_book(symbol, limit=3)
+        if not ob.get("bids") or not ob.get("asks"):
+            return (1e9, 0.0, 0.0)
+        best_bid = float(ob["bids"][0][0]); best_ask = float(ob["asks"][0][0])
+        mid = (best_bid + best_ask) / 2.0
+        spread_bps = (best_ask - best_bid) / mid * 1e4 if mid else 1e9
+        bid_depth_usd = sum(float(p)*float(q) for p, q in ob["bids"])
+        ask_depth_usd = sum(float(p)*float(q) for p, q in ob["asks"])
+        return (spread_bps, bid_depth_usd, ask_depth_usd)
+
     # Unified wrappers
     async def create_market_order(self, symbol, side, amount, params=None):
         return await self.exchange.create_order(symbol, "market", side, amount, None, params or {})
@@ -69,7 +83,7 @@ class ExchangeClient:
         return await self.exchange.create_order(symbol, "limit", side, amount, price, params or {})
 
     async def set_stop_loss(self, symbol: str, price: float) -> bool:
-        """Bybit v5 trading_stop via raw endpoint (ccxt may not have a unified helper)."""
+        """Bybit v5 trading_stop via raw endpoint (if available)."""
         try:
             market = self.exchange.market(symbol)
             req = {
@@ -78,7 +92,6 @@ class ExchangeClient:
                 "stopLoss": str(round(float(price), 6)),
                 "slTriggerBy": "LastPrice",
             }
-            # Prefer v5 endpoint name; fallback to older naming if ccxt version differs
             if hasattr(self.exchange, "privatePostV5PositionTradingStop"):
                 await self.exchange.privatePostV5PositionTradingStop(req)
             elif hasattr(self.exchange, "privatePostContractV3PrivatePositionTradingStop"):
@@ -112,7 +125,52 @@ class ExchangeClient:
             logger.error(f"set_take_profit failed: {e}")
             return False
 
-    # --- The robust order placement you asked for (with all the fixes) ---
+    async def has_open_position(self, symbol: str) -> bool:
+        """Check if there's a non-zero position size for this symbol."""
+        try:
+            try:
+                poss = await self.exchange.fetch_positions(symbols=[symbol], params={"category":"linear"})
+            except Exception:
+                poss = await self.exchange.fetch_positions(params={"category":"linear"})
+            for p in poss or []:
+                sym = p.get("symbol") or p.get("info", {}).get("symbol", "")
+                if sym and symbol.split(":")[0] not in sym:
+                    continue
+                size = 0.0
+                for k in ("contracts","contractSize","positionAmt"):
+                    v = p.get(k)
+                    if v is not None:
+                        try: size = float(v); break
+                        except Exception: pass
+                if not size:
+                    info = p.get("info") or {}
+                    for k in ("size","positionValue","positionAmt"):
+                        v = info.get(k)
+                        if v is not None:
+                            try: size = float(v); break
+                            except Exception: pass
+                if abs(size) > 0:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    async def reduce_position(self, symbol: str, side: str, amount: float) -> bool:
+        """
+        Close amount using reduceOnly market order.
+        Pass side='sell' to close a long, side='buy' to close a short.
+        """
+        try:
+            params = {"reduceOnly": True, "category": "linear"}
+            o = await self.create_market_order(symbol, side, amount, params=params)
+            if o:
+                logger.info(f"✅ Reduced position {symbol} by {amount} via {side.upper()} reduce-only")
+                return True
+        except Exception as e:
+            logger.error(f"reduce_position failed {symbol}: {e}")
+        return False
+
+    # --- robust place_order_with_sl_tp unchanged except minor context ---
     async def place_order_with_sl_tp(
         self,
         symbol: str,
@@ -125,6 +183,9 @@ class ExchangeClient:
         reduce_only: bool = False,
         signal_strategy: str = "unknown",
     ) -> Optional[Dict]:
+        """
+        Robust Bybit order with SL/TP attachment and resilient retries (price band, positionIdx, strip+set).
+        """
         try:
             current_price = await self.get_price(symbol)
             if not current_price or current_price <= 0:
@@ -138,7 +199,7 @@ class ExchangeClient:
             if order_type_l not in ("market", "limit"):
                 order_type_l = "market"
 
-            # Direction sanity
+            # Direction sanity + gentle auto-corrects
             if side_l in ("buy", "long"):
                 if stop_loss is not None and stop_loss >= current_price:
                     stop_loss = current_price * 0.98
@@ -163,7 +224,7 @@ class ExchangeClient:
             if has_sl or has_tp:
                 params["tpslMode"] = "Full"
             if has_sl:
-                params["stopLoss"] = str(round(float(stop_loss), 6))
+                params["stopLoss"]   = str(round(float(stop_loss), 6))
                 params["slTriggerBy"] = "LastPrice"
                 params["slOrderType"] = "Market"
             if has_tp:
@@ -185,21 +246,17 @@ class ExchangeClient:
                     return await self.create_market_order(symbol, side_l, quantity, params=p)
                 else:
                     use_price = order_price if order_price is not None else (price if price is not None else current_price)
-                    # Maker-first for non-scalp strategies
                     p2 = dict(p)
                     if signal_strategy not in ("scalping", "advanced_scalping"):
-                        # try post only (maker)
                         p2["postOnly"] = True
                         try:
                             return await self.create_limit_order(symbol, side_l, quantity, use_price, params=p2)
                         except Exception:
-                            # fall back to normal limit if post-only rejected
                             p2.pop("postOnly", None)
                     return await self.create_limit_order(symbol, side_l, quantity, use_price, params=p2)
 
             safe_limit_price: Optional[float] = None
 
-            # First attempt (no positionIdx)
             try:
                 order = await _submit(params)
                 if order:
@@ -209,8 +266,6 @@ class ExchangeClient:
             except Exception as first_err:
                 emsg = str(first_err)
                 lower = emsg.lower()
-
-                # Parse retCode if present
                 ret_code = None
                 try:
                     jtxt = emsg.split("bybit", 1)[1].strip()
@@ -219,7 +274,6 @@ class ExchangeClient:
                 except Exception:
                     pass
 
-                # A) position mode mismatch -> retry with Hedge positionIdx
                 if "position idx not match position mode" in lower:
                     logger.warning("Bybit: positionIdx mismatch. Retrying in Hedge mode with positionIdx...")
                     hedge_params = dict(params)
@@ -233,7 +287,6 @@ class ExchangeClient:
                     except Exception as second_err:
                         logger.error(f"Retry with positionIdx failed: {second_err}")
 
-                # B) Price band violation -> clamp to top-of-book and retry LIMIT
                 if ret_code == 30208 or "maximum buying price" in lower or "minimum selling price" in lower:
                     logger.warning(f"Price band hit: {emsg}. Fetching top-of-book to clamp price and retry as LIMIT...")
                     try:
@@ -282,7 +335,6 @@ class ExchangeClient:
                     except Exception as clamp_err:
                         logger.error(f"Retry with clamped price failed: {clamp_err}")
 
-                # C) Strip TP/SL and place clean order, reuse safe_limit_price if set
                 must_strip_tpsl = any(x in lower for x in (
                     "tpslmode","tpordertype","slordertype",
                     "tpordertype can not have a value when","param error"

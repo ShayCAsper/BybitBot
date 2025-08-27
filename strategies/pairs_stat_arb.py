@@ -3,17 +3,21 @@ import numpy as np
 
 class BTCEthPairs:
     """
-    Z-score of log spread between BTC & ETH; market-neutral two-leg proposals.
+    Uses the first two symbols in the provided list as the pair (default: BTC & ETH).
     """
-    def __init__(self, cfg, exchange):
+    def __init__(self, cfg, exchange, symbols: List[str]):
         self.cfg = cfg; self.exchange = exchange
+        self.symbols = symbols
         self.lookback = 240
         self.entry_z  = 2.0
         self.exit_z   = 0.5
 
     async def scan(self, market_data: Dict[str, Any], predictions: Dict[str, Any]) -> List[Dict]:
-        a = market_data.get("BTC/USDT:USDT", {}).get("ohlcv") or []
-        b = market_data.get("ETH/USDT:USDT", {}).get("ohlcv") or []
+        if len(self.symbols) < 2:
+            return []
+        a_sym, b_sym = self.symbols[0], self.symbols[1]
+        a = market_data.get(a_sym, {}).get("ohlcv") or []
+        b = market_data.get(b_sym, {}).get("ohlcv") or []
         if len(a) < self.lookback or len(b) < self.lookback: return []
         pa = np.array([x[4] for x in a][-self.lookback:], dtype=float)
         pb = np.array([x[4] for x in b][-self.lookback:], dtype=float)
@@ -25,23 +29,20 @@ class BTCEthPairs:
         z = float((spread[-1] - mu) / sd)
 
         out: List[Dict] = []
+        px_a, px_b = float(pa[-1]), float(pb[-1])
+
         if z <= -self.entry_z:
-            # long spread: long ETH, short BTC
-            px_e, px_b = float(pb[-1]), float(pa[-1])
-            atr_e = (pb[-1] - pb.max() if len(pb)>1 else 0.0)  # dummy ATR-ish
-            atr_b = (pa.max() - pa[-1] if len(pa)>1 else 0.0)
             out += [
-                {"symbol":"ETH/USDT:USDT","side":"buy","entry":px_e,"stop":px_e*0.996,"take":px_e*1.006,
-                 "confidence":0.65,"rr":1.2,"edge_bps":2.0,"meta":{"pairs":True,"leg":"long_eth","beta":float(beta)}},
-                {"symbol":"BTC/USDT:USDT","side":"sell","entry":px_b,"stop":px_b*1.004,"take":px_b*0.994,
-                 "confidence":0.65,"rr":1.2,"edge_bps":2.0,"meta":{"pairs":True,"leg":"short_btc","beta":float(beta)}},
+                {"symbol":b_sym,"side":"buy","entry":px_b,"stop":px_b*0.996,"take":px_b*1.006,
+                 "confidence":0.65,"rr":1.2,"edge_bps":2.0,"meta":{"pairs":True,"leg":"long_B","beta":float(beta)}},
+                {"symbol":a_sym,"side":"sell","entry":px_a,"stop":px_a*1.004,"take":px_a*0.994,
+                 "confidence":0.65,"rr":1.2,"edge_bps":2.0,"meta":{"pairs":True,"leg":"short_A","beta":float(beta)}},
             ]
         elif z >= self.entry_z:
-            px_e, px_b = float(pb[-1]), float(pa[-1])
             out += [
-                {"symbol":"ETH/USDT:USDT","side":"sell","entry":px_e,"stop":px_e*1.004,"take":px_e*0.994,
-                 "confidence":0.65,"rr":1.2,"edge_bps":2.0,"meta":{"pairs":True,"leg":"short_eth","beta":float(beta)}},
-                {"symbol":"BTC/USDT:USDT","side":"buy","entry":px_b,"stop":px_b*0.996,"take":px_b*1.006,
-                 "confidence":0.65,"rr":1.2,"edge_bps":2.0,"meta":{"pairs":True,"leg":"long_btc","beta":float(beta)}},
+                {"symbol":b_sym,"side":"sell","entry":px_b,"stop":px_b*1.004,"take":px_b*0.994,
+                 "confidence":0.65,"rr":1.2,"edge_bps":2.0,"meta":{"pairs":True,"leg":"short_B","beta":float(beta)}},
+                {"symbol":a_sym,"side":"buy","entry":px_a,"stop":px_a*0.996,"take":px_a*1.006,
+                 "confidence":0.65,"rr":1.2,"edge_bps":2.0,"meta":{"pairs":True,"leg":"long_A","beta":float(beta)}},
             ]
         return out

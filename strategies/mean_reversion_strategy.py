@@ -2,17 +2,15 @@ from typing import Dict, Any, List
 import numpy as np
 
 class MeanReversionStrategy:
-    """
-    Bollinger/z-score + RSI hookback mean reversion with time-stop encoded in meta.
-    """
-    def __init__(self, cfg, exchange):
+    def __init__(self, cfg, exchange, symbols: List[str]):
         self.cfg = cfg
         self.exchange = exchange
+        self.symbols = symbols
         self.bb_len = 20
 
     async def scan(self, market_data: Dict[str, Any], predictions: Dict[str, Any]) -> List[Dict]:
         out: List[Dict] = []
-        for symbol in self.cfg.symbols_list():
+        for symbol in self.symbols:
             md = market_data.get(symbol) or {}
             ohlcv = md.get("ohlcv") or []
             if len(ohlcv) < self.bb_len + 5: continue
@@ -23,7 +21,6 @@ class MeanReversionStrategy:
             upper, lower = ma + 2*sd, ma - 2*sd
             z = (px - ma)/sd
 
-            # RSI(14)
             diffs = np.diff(close)
             gains = np.clip(diffs, 0, None); losses = -np.clip(diffs, None, 0)
             avg_g = gains[-14:].mean() if len(gains)>=14 else gains.mean() if len(gains) else 0.0

@@ -2,11 +2,9 @@ from typing import Dict, Any, List
 import numpy as np
 
 class RelativeStrength:
-    """
-    Long strongest / short weakest among configured symbols over a lookback window.
-    """
-    def __init__(self, cfg, exchange):
+    def __init__(self, cfg, exchange, symbols: List[str]):
         self.cfg = cfg; self.exchange = exchange
+        self.symbols = symbols
         self.lookback = 120
         self.cooldown_bars = 30
         self._last_bar = 0
@@ -17,7 +15,7 @@ class RelativeStrength:
             return []
 
         series = []
-        for s in self.cfg.symbols_list():
+        for s in self.symbols:
             ohlcv = market_data.get(s, {}).get("ohlcv") or []
             if len(ohlcv) < self.lookback: return []
             px = np.array([x[4] for x in ohlcv], dtype=float)

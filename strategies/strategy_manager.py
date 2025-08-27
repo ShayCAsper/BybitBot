@@ -2,7 +2,6 @@ from typing import Dict, Any, List, Optional
 from loguru import logger
 from core.master_router import Proposal
 
-# Import strategies implemented below
 from strategies.momentum_strategy import MomentumStrategy
 from strategies.mean_reversion_strategy import MeanReversionStrategy
 from strategies.pairs_stat_arb import BTCEthPairs
@@ -21,28 +20,25 @@ class StrategyManager:
         reg = {}
         for name in self.active_names:
             try:
+                symbols = self.cfg.strategy_symbols(name)
                 if name == "momentum":
-                    reg[name] = MomentumStrategy(self.cfg, self.exchange)
+                    reg[name] = MomentumStrategy(self.cfg, self.exchange, symbols)
                 elif name == "mean_reversion":
-                    reg[name] = MeanReversionStrategy(self.cfg, self.exchange)
+                    reg[name] = MeanReversionStrategy(self.cfg, self.exchange, symbols)
                 elif name == "pairs":
-                    reg[name] = BTCEthPairs(self.cfg, self.exchange)
+                    reg[name] = BTCEthPairs(self.cfg, self.exchange, symbols)
                 elif name == "rsr":
-                    reg[name] = RelativeStrength(self.cfg, self.exchange)
+                    reg[name] = RelativeStrength(self.cfg, self.exchange, symbols)
                 elif name == "scalping":
-                    reg[name] = SimpleScalper(self.cfg, self.exchange)
+                    reg[name] = SimpleScalper(self.cfg, self.exchange, symbols)
                 elif name == "advanced_scalping":
-                    reg[name] = AdvancedScalper(self.cfg, self.exchange)
+                    reg[name] = AdvancedScalper(self.cfg, self.exchange, symbols)
+                logger.info(f"🧩 Strategy '{name}' symbols: {', '.join(symbols)}")
             except Exception as e:
                 logger.error(f"Strategy init failed for {name}: {e}")
         return reg
 
-    async def generate_proposals(
-        self,
-        market_data: Dict[str, Any],
-        predictions: Optional[Dict[str, Any]] = None,
-        only_strategies: Optional[List[str]] = None
-    ) -> List[Proposal]:
+    async def generate_proposals(self, market_data: Dict[str, Any], predictions: Optional[Dict[str, Any]] = None, only_strategies: Optional[List[str]] = None) -> List[Proposal]:
         names = self.active_names if not only_strategies else [n for n in only_strategies if n in self.active_names]
         proposals: List[Proposal] = []
         for name in names:
@@ -50,9 +46,7 @@ class StrategyManager:
             if not strat:
                 continue
             try:
-                sigs = await strat.scan(market_data, predictions or {})
-                for s in sigs:
-                    # each strat returns dicts; convert to Proposal
+                for s in await strat.scan(market_data, predictions or {}):
                     proposals.append(Proposal(
                         symbol=s["symbol"], side=s["side"], entry=s["entry"], stop=s["stop"], take=s["take"],
                         strategy=name, confidence=s.get("confidence", 0.6),

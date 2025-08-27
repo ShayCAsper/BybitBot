@@ -1,74 +1,46 @@
-
 {
-    "name": "Advanced Scalping Strategy",
-    "description": "High-frequency scalping with multiple sub-strategies",
-    "strategies": {
-          "active": ["advanced_scalping","scalping", "momentum", "mean_reversion"],
-        "advanced_scalping": {
-            "enabled": true,
-            "min_spread": 0.00005,
-            "max_spread": 0.0002,
-            "spread_entry_ratio": 0.3,
-            "imbalance_threshold": 0.65,
-            "depth_levels": 20,
-            "volume_multiplier": 2.0,
-            "liquidity_threshold": 50000,
-            "ma_period": 20,
-            "gap_threshold": 0.0015,
-            "gap_close_target": 0.5,
-            "momentum_filter": true,
-            "max_position_time": 300,
-            "quick_profit": 0.0015,
-            "tight_stop": 0.001
-        },
-        "scalping": {
-      "enabled": true,
-      "min_spread": 0.00005,
-      "max_spread": 0.005,
-      "timeframe": "1m",
-      "lookback": 10,
-      "base_position_size": 0.001,
-      "imbalance_threshold": 0.20,
-      "volume_multiplier": 1.3
-    },
-    "momentum": {
-      "enabled": true,
-      "lookback_short": 7,
-      "lookback_long": 21,
-      "momentum_threshold": 0.008,
-      "base_position_size": 0.001,
-      "volume_threshold": 1.5
-    },
-    "mean_reversion": {
-      "enabled": true,
-      "lookback": 15,
-      "std_threshold": 1.5,
-      "base_position_size": 0.001,
-      "rsi_oversold": 35,
-      "rsi_overbought": 65
-    }
-    },
-    "risk": {
-        "max_position_size": 0.02,
-        "stop_loss_pct": 0.001,
-        "take_profit_pct": 0.0015,
-        "max_daily_loss": 0.05,
-        "max_positions": 2,
-        "position_sizing": "fixed",
-        "base_position_value": 100,
-        "trailing_stop": {
-            "enabled": true,
-            "type": "percentage",
-            "distance": 0.005,
-            "activation": 0.001,
-            "breakeven_enabled": true,
-            "breakeven_trigger": 0.0005
-        }
-    },
-    "coins": ["BTC", "ETH", "SOL"],
-    "exchange": {
-        "symbols": ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"]
-    }
+  "ACTIVE_STRATEGIES": "advanced_scalping,scalping,momentum,mean_reversion,pairs,rsr",
+
+  "TRADING_COINS": "BTC,ETH,SOL,DOGE",
+
+  "ADVANCED_SCALPING_COINS": "BTC,ETH",
+  "SCALPING_COINS": "BTC,ETH,SOL",
+  "MOMENTUM_COINS": "ETH,SOL",
+  "MEAN_REVERSION_COINS": "BTC",
+  "PAIRS_COINS": "BTC,ETH",
+  "RSR_COINS": "BTC,ETH,SOL",
+
+  "SESSION_HOURS_UTC": "0-24",
+  "LOOP_LOG_EVERY": 1,
+  "LOOP_INTERVAL": 5,
+  "INTERVAL_ADV_SCALPING": 2,
+  "INTERVAL_SCALPING": 2,
+  "INTERVAL_MOMENTUM": 12,
+  "INTERVAL_MEANREV": 45,
+  "INTERVAL_ML": 90,
+  "INTERVAL_PAIRS": 20,
+  "INTERVAL_RSR": 20,
+
+  "TRAILING_ENABLED": true,
+
+  "DAILY_LOSS_CAP_PCT": 1.5,
+  "MAX_DAILY_TRADES": 20,
+  "MAX_POSITIONS": 2,
+  "MIN_RR_SCALP": 1.0,
+  "MIN_RR_MOMENTUM": 1.2,
+  "MIN_RR_MEANREV": 1.2,
+  "MAX_CONSEC_LOSSES": 3,
+  "LOSS_COOLDOWN_MIN": 45,
+
+  "MAX_SPREAD_BPS_SCALP": 10,
+  "MAX_SPREAD_BPS_DEFAULT": 12,
+  "MIN_DEPTH_USD": 20000,
+  "MIN_LIQUIDITY_USD": 500000,
+  "MIN_VOL_RATIO": 0.0004,
+
+  "ADV_SCALP_MIN_IMBALANCE": 0.05,
+  "ADV_SCALP_MA_GAP_BPS": 3.0,
+
+  "FORCE_ONE_WAY_MODE": true,
+  "TESTNET": true
 }
-
-
