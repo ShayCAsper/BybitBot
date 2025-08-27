@@ -1,83 +1,45 @@
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any, List
 import numpy as np
-
-def _sma(arr, n):
-    if len(arr) < n:
-        return float(np.mean(arr)) if len(arr) else 0.0
-    return float(np.mean(arr[-n:]))
-
-def _stdev(arr, n):
-    if len(arr) < n:
-        return float(np.std(arr)) if len(arr) else 0.0
-    return float(np.std(arr[-n:]))
-
-def _rsi(closes: np.ndarray, period: int = 14) -> float:
-    diffs = np.diff(closes)
-    gains = np.clip(diffs, 0, None)
-    losses = -np.clip(diffs, None, 0)
-    avg_gain = gains[-period:].mean() if len(gains) >= period else gains.mean() if len(gains) else 0
-    avg_loss = losses[-period:].mean() if len(losses) >= period else losses.mean() if len(losses) else 1e-9
-    rs = avg_gain / max(avg_loss, 1e-9)
-    return 100 - (100 / (1 + rs))
 
 class MeanReversionStrategy:
     """
-    Bollinger / z-score / RSI based entries with hysteresis and time-stop metadata.
+    Bollinger/z-score + RSI hookback mean reversion with time-stop encoded in meta.
     """
-
-    def __init__(self, config: Dict[str, Any], exchange):
-        self.config = config or {}
+    def __init__(self, cfg, exchange):
+        self.cfg = cfg
         self.exchange = exchange
-
-        self.bb_len = int(self.config.get("bb_len", 20))
-        self.std_threshold = float(self.config.get("std_threshold", 2.0))
-        self.hysteresis = float(self.config.get("hysteresis", 0.5))
-        self.time_stop = int(self.config.get("time_stop", 20))  # bars
+        self.bb_len = 20
 
     async def scan(self, market_data: Dict[str, Any], predictions: Dict[str, Any]) -> List[Dict]:
         out: List[Dict] = []
-        for symbol, md in market_data.items():
-            s = await self._analyze_symbol(symbol, md)
-            if s:
-                out.append(s)
+        for symbol in self.cfg.symbols_list():
+            md = market_data.get(symbol) or {}
+            ohlcv = md.get("ohlcv") or []
+            if len(ohlcv) < self.bb_len + 5: continue
+            close = np.array([c[4] for c in ohlcv], dtype=float)
+            px = float(close[-1])
+            ma = close[-self.bb_len:].mean()
+            sd = close[-self.bb_len:].std() + 1e-9
+            upper, lower = ma + 2*sd, ma - 2*sd
+            z = (px - ma)/sd
+
+            # RSI(14)
+            diffs = np.diff(close)
+            gains = np.clip(diffs, 0, None); losses = -np.clip(diffs, None, 0)
+            avg_g = gains[-14:].mean() if len(gains)>=14 else gains.mean() if len(gains) else 0.0
+            avg_l = losses[-14:].mean() if len(losses)>=14 else losses.mean() if len(losses) else 1e-9
+            rsi = 100 - 100/(1+(avg_g/max(avg_l,1e-9)))
+
+            if z < -2.0 and rsi < 30 and px < lower:
+                sl = px - 1.5*sd
+                tp = ma
+                out.append({"symbol":symbol,"side":"buy","entry":px,"stop":sl,"take":tp,
+                            "confidence":0.6,"rr":(tp-px)/max(px-sl,1e-9),"edge_bps":2.0,
+                            "meta":{"time_stop_bars":20}})
+            elif z > 2.0 and rsi > 70 and px > upper:
+                sl = px + 1.5*sd
+                tp = ma
+                out.append({"symbol":symbol,"side":"sell","entry":px,"stop":sl,"take":tp,
+                            "confidence":0.6,"rr":(sl-px)/max(px-tp,1e-9),"edge_bps":2.0,
+                            "meta":{"time_stop_bars":20}})
         return out
-
-    async def _analyze_symbol(self, symbol: str, md: Dict[str, Any]) -> Optional[Dict]:
-        ohlcv = md.get("ohlcv") or []
-        if len(ohlcv) < self.bb_len + 5:
-            return None
-
-        closes = np.array([c[4] for c in ohlcv], dtype=float)
-        px = closes[-1]
-
-        ma = _sma(closes, self.bb_len)
-        sd = _stdev(closes, self.bb_len)
-        if sd <= 0:
-            return None
-
-        bb_upper = ma + 2 * sd
-        bb_lower = ma - 2 * sd
-        z = (px - ma) / sd
-        rsi = _rsi(closes, 14)
-
-        # Hysteresis: require "hook" back by 0.5σ vs threshold
-        buy_ok = (z < -self.std_threshold + self.hysteresis) and (rsi < 30) and (px < bb_lower)
-        sell_ok = (z >  self.std_threshold - self.hysteresis) and (rsi > 70) and (px > bb_upper)
-
-        if buy_ok:
-            return {
-                "symbol": symbol,
-                "side": "buy",
-                "confidence": 0.6,
-                "weight": 0.9,
-                "metadata": {"type": "mean_reversion", "time_stop_bars": self.time_stop, "zscore": float(z), "rsi": float(rsi)}
-            }
-        if sell_ok:
-            return {
-                "symbol": symbol,
-                "side": "sell",
-                "confidence": 0.6,
-                "weight": 0.9,
-                "metadata": {"type": "mean_reversion", "time_stop_bars": self.time_stop, "zscore": float(z), "rsi": float(rsi)}
-            }
-        return None

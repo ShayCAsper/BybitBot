@@ -1,87 +1,51 @@
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any, List
 import numpy as np
-from .integrate_scalping import compute_spread_and_mid, orderbook_imbalance, nearest_wall_proximity
 
-class AdvancedScalpingStrategy:
+class AdvancedScalper:
     """
-    Microstructure-aware scalper with spread/imbalance/MA-gap + wall proximity and micro-slippage guards.
+    Slightly stricter than SimpleScalper; checks micro MA slope as well.
     """
-
-    def __init__(self, config: Dict[str, Any], exchange):
-        self.config = config or {}
+    def __init__(self, cfg, exchange):
+        self.cfg = cfg
         self.exchange = exchange
-
-        self.max_spread = float(self.config.get("max_spread", 0.0006))   # 6 bps
-        self.min_imbalance = float(self.config.get("min_imbalance", 0.20))
-        self.ma_fast = int(self.config.get("ma_fast", 20))
-        self.ma_slow = int(self.config.get("ma_slow", 200))
-        self.ma_gap_bps = float(self.config.get("ma_gap_bps", 8.0))      # 8 bps between price and MA
-        self.slippage_bps = float(self.config.get("slippage_bps", 7.0))  # 7 bps mid-move over last 3 ticks
+        self.min_imb = float(getattr(cfg, "adv_min_imbalance", 0.10))
+        self.gap_bps = float(getattr(cfg, "adv_ma_gap_bps", 5.0))
 
     async def scan(self, market_data: Dict[str, Any], predictions: Dict[str, Any]) -> List[Dict]:
-        signals: List[Dict] = []
-        for symbol, md in market_data.items():
-            sig = await self._analyze_symbol(symbol, md)
-            if sig:
-                signals.append(sig)
-        return signals
+        out: List[Dict] = []
+        for symbol in self.cfg.symbols_list():
+            md = market_data.get(symbol) or {}
+            ohlcv = md.get("ohlcv") or []
+            ob    = md.get("orderbook") or {}
+            if len(ohlcv) < 80 or not ob.get("bids") or not ob.get("asks"):
+                continue
 
-    async def _analyze_symbol(self, symbol: str, md: Dict[str, Any]) -> Optional[Dict]:
-        ohlcv = md.get("ohlcv") or []
-        orderbook = md.get("orderbook") or {}
-        ticker = md.get("ticker") or {}
-        if len(ohlcv) < max(self.ma_slow + 2, 50) or not orderbook:
-            return None
+            close = np.array([c[4] for c in ohlcv], dtype=float)
+            px = float(close[-1])
+            ma20 = close[-20:].mean()
+            ma8  = close[-8:].mean()
+            slope = ma8 - close[-16:-8].mean() if len(close) >= 24 else 0.0
+            gap_bps = abs(px - ma20)/px*1e4
 
-        spread, best_bid, best_ask = compute_spread_and_mid(orderbook)
-        if spread <= 0 or spread > self.max_spread:
-            return None
+            best_bid = ob["bids"][0][0]; best_ask = ob["asks"][0][0]
+            spread_bps = (best_ask - best_bid)/px*1e4
+            bid_vol = sum([b[1] for b in ob["bids"][:5]]) if ob.get("bids") else 0.0
+            ask_vol = sum([a[1] for a in ob["asks"][:5]]) if ob.get("asks") else 0.0
+            imb = (bid_vol - ask_vol)/max(bid_vol + ask_vol, 1e-9)
 
-        # Current price
-        px = float(ohlcv[-1][4])
+            if spread_bps > 6:  # stricter
+                continue
 
-        # Moving averages (simple)
-        closes = np.array([c[4] for c in ohlcv])
-        ma_f = closes[-self.ma_fast:].mean()
-        ma_s = closes[-self.ma_slow:].mean()
-
-        # Require a minimal "gap" to MA to avoid trading noise
-        gap_bps = abs(px - ma_f) / px * 1e4
-        if gap_bps < self.ma_gap_bps:
-            return None
-
-        imb = orderbook_imbalance(orderbook, depth=5)
-
-        # Micro-slippage / mid jump guard (if last_ticks available)
-        last_ticks = md.get("last_ticks") or []
-        if len(last_ticks) >= 3:
-            mid_move = abs(last_ticks[-1] - last_ticks[-3]) / max(1e-9, last_ticks[-3]) * 1e4
-            if mid_move > self.slippage_bps:
-                return None
-
-        # Wall proximity in direction of trade
-        side = None
-        if px > ma_f and ma_f > ma_s and imb > self.min_imbalance:
-            side = "buy"
-            if not nearest_wall_proximity(orderbook, px, "buy", depth=10, bps_thresh=5.0):
-                return None
-        elif px < ma_f and ma_f < ma_s and imb < -self.min_imbalance:
-            side = "sell"
-            if not nearest_wall_proximity(orderbook, px, "sell", depth=10, bps_thresh=5.0):
-                return None
-
-        if not side:
-            return None
-
-        conf = 0.65 + min(0.1, (abs(imb) - self.min_imbalance) * 0.2)
-        return {
-            "symbol": symbol,
-            "side": side,
-            "confidence": min(conf, 0.9),
-            "metadata": {
-                "type": "advanced_scalping",
-                "spread": spread,
-                "imbalance": imb,
-                "ma_gap_bps": gap_bps
-            }
-        }
+            if imb > self.min_imb and gap_bps > self.gap_bps and slope > 0:
+                sl = px * (1 - 0.004)
+                tp = px * (1 + 0.006)
+                out.append({"symbol":symbol,"side":"buy","entry":px,"stop":sl,"take":tp,
+                            "confidence":0.62,"rr":(tp-px)/max(px-sl,1e-9),"edge_bps":5.0,
+                            "cost_bps":spread_bps+1.5})
+            elif imb < -self.min_imb and gap_bps > self.gap_bps and slope < 0:
+                sl = px * (1 + 0.004)
+                tp = px * (1 - 0.006)
+                out.append({"symbol":symbol,"side":"sell","entry":px,"stop":sl,"take":tp,
+                            "confidence":0.62,"rr":(sl-px)/max(px-tp,1e-9),"edge_bps":5.0,
+                            "cost_bps":spread_bps+1.5})
+        return out
