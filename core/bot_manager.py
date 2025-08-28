@@ -396,6 +396,18 @@ class BotManager:
 
   
     # ---------- Helpers ----------
+    def _append_event(self, payload: dict) -> None:
+        """Append a compact JSON event line for tools/monitor.py."""
+        try:
+            from pathlib import Path
+            import json, time as _t
+            Path("logs").mkdir(exist_ok=True)
+            payload = dict(payload)
+            payload.setdefault("ts", _t.time())
+            with open("logs/events.jsonl", "a", encoding="utf-8") as f:
+                f.write(json.dumps(payload) + "\n")
+        except Exception:
+            pass
     def _in_session(self) -> bool:
         try:
             start_h, end_h = [int(x) for x in self.session_hours_utc.split("-")]
@@ -441,15 +453,7 @@ class BotManager:
                 # f.write(json.dumps(payload) + "\n")
         # except Exception as e:
             # logger.warning(f"[events] write failed: {e}")
-    def _append_event(self, payload: dict) -> None:
-        """Append one JSON line to logs/events.jsonl (best-effort)."""
-        try:
-            Path("logs").mkdir(exist_ok=True)
-            with open("logs/events.jsonl", "a", encoding="utf-8") as f:
-                f.write(json.dumps(payload) + "\n")
-        except Exception:
-            # keep the trading loop safe
-            pass
+   
             
     async def _pre_trade_guard(self, p: Proposal) -> bool:
         # daily loss cap
@@ -589,157 +593,112 @@ class BotManager:
             return False
     async def _manage_all_trails(self):
         """
-        - Emit 'exit' events when a position disappears on the exchange
-        - Maintain breakeven + trailing stop on open positions
+        - If a position disappears on exchange → emit 'exit' event (with best-effort realized PnL) and drop local state.
+        - Maintain breakeven + trailing SL, using exchange-side clamp to avoid Bybit 10001 errors.
         """
-        for sym in list(self.positions.keys()):  # stable copy
+        for sym in list(self.positions.keys()):
             pos = self.positions.get(sym)
             if not pos:
                 continue
 
-            # ---------- 1) Position disappeared on exchange → write EXIT event ----------
+            # 1) Gone on exchange? => write exit event + drop
             try:
                 still_open = await self.exchange.has_open_position(sym)
             except Exception:
-                # API hiccup – skip this symbol this tick
                 continue
 
             if not still_open:
                 stg = self.position_strategy.pop(sym, None)
-                pos_info = dict(pos or {})
+                pos_info = pos or {}
 
-                # Pull realized PnL from exchange if available
+                # best-effort realized pnl using last price (if exchange can't give us realized)
                 realized = None
                 try:
-                    opened_ts = int((pos_info.get("opened_ts") or time.time()) * 1000)
-                    # If you don't have this method, it will throw and we'll fall back
-                    realized = await self.exchange.fetch_realized_pnl(sym, since_ms=opened_ts)
-                except Exception:
-                    realized = None
-
-                # Fallback: approximate from current price, entry and side
-                if realized is None:
-                    try:
-                        entry = float(pos_info.get("entry") or pos_info.get("entry_price") or pos_info.get("avg_entry_price") or 0.0)
-                    except Exception:
-                        entry = 0.0
-                    try:
-                        qty = float(pos_info.get("qty") or pos_info.get("contracts") or pos_info.get("size") or 0.0)
-                    except Exception:
-                        qty = 0.0
-                    side = str(pos_info.get("side") or "").lower()
-
-                    try:
-                        last = await self.exchange.get_price(sym)
-                    except Exception:
-                        last = None
-
+                    last  = await self.exchange.get_price(sym)
+                    entry = float(pos_info.get("entry") or 0.0)
+                    qty   = float(pos_info.get("qty")   or 0.0)
+                    side  = (pos_info.get("side") or "").lower()
                     if entry and qty and last:
-                        if side in ("buy", "long"):
-                            realized = (float(last) - entry) * qty
-                        elif side in ("sell", "short"):
-                            realized = (entry - float(last)) * qty
-                        else:
-                            realized = 0.0
+                        realized = (last - entry) * qty if side in ("buy","long") else (entry - last) * qty
                     else:
                         realized = 0.0
+                except Exception:
+                    realized = 0.0
 
-                # Emit EXIT event (consumed by tools/monitor.py)
                 self._append_event({
                     "ts": time.time(),
                     "type": "exit",
                     "strategy": stg,
                     "symbol": sym,
-                    "realized_pnl": float(round(realized or 0.0, 8)),
+                    "realized_pnl": float(realized),
                 })
 
-                # Drop local state
                 self.positions.pop(sym, None)
                 continue
 
-            # ---------- 2) Still open → trailing + breakeven management ----------
+            # 2) Still open: move SLs safely
             price = await self.exchange.get_price(sym)
             if price is None:
                 continue
-            price = float(price)
 
-            side = str(pos.get("side") or "").lower()
-            try:
-                entry = float(pos.get("entry") or pos.get("entry_price") or 0.0)
-            except Exception:
-                entry = 0.0
+            side = str(pos.get("side", "")).lower()
+            entry = float(pos.get("entry") or 0.0)
             cur_sl = pos.get("current_sl")
-            tp     = pos.get("tp")
-            trail_pct    = float(self.trailing_cfg.percent)
+            tp = pos.get("tp")
+
+            trail_pct = float(self.trailing_cfg.percent)
             breakeven_at = float(self.trailing_cfg.breakeven_at)
 
-            # Normalize SL/TP to float where present
-            try:
-                cur_sl_f = float(cur_sl) if cur_sl is not None else None
-            except Exception:
-                cur_sl_f = None
-            try:
-                tp_f = float(tp) if tp is not None else None
-            except Exception:
-                tp_f = None
-
             if side in ("buy", "long"):
-                # Track peak
-                base = entry if entry > 0 else price
-                try:
-                    peak = float(pos.get("peak", base))
-                except Exception:
-                    peak = base
-                peak = max(peak, price)
-                pos["peak"] = peak
+                pos["peak"] = max(float(pos.get("peak", entry or price)), float(price))
+                up_pct = ((pos["peak"] - entry) / entry * 100.0) if entry else 0.0
 
-                # Breakeven once in profit by X%
-                up_pct = ((peak - entry) / entry * 100.0) if entry else 0.0
+                # breakeven
                 if not pos.get("breakeven_set", False) and up_pct >= breakeven_at and entry:
-                    new_sl = max(float(pos.get("sl") or 0.0), entry)
-                    if (cur_sl_f is None or new_sl > cur_sl_f) and new_sl < price:
-                        if await self.exchange.set_stop_loss(sym, new_sl):
-                            pos["current_sl"] = new_sl
-                            pos["breakeven_set"] = True
-                            logger.info(f"🟢 Breakeven set for {sym} @ {new_sl:.6f}")
+                    desired = max(float(pos.get("sl") or 0.0), float(entry))
+                    ok = await self.exchange.set_stop_loss(sym, desired, side="long")
+                    if ok:
+                        pos["current_sl"] = desired
+                        pos["breakeven_set"] = True
 
-                # Trailing from peak by trail_pct
-                trail_stop = peak * (1 - trail_pct / 100.0)
-                if tp_f is not None:
-                    trail_stop = min(trail_stop, tp_f)  # never trail beyond TP
-                if (cur_sl_f is None or trail_stop > cur_sl_f) and trail_stop < price:
-                    if await self.exchange.set_stop_loss(sym, trail_stop):
+                # trail from peak
+                trail_stop = float(pos["peak"]) * (1 - trail_pct / 100.0)
+                if tp is not None:
+                    try:
+                        trail_stop = min(trail_stop, float(tp))
+                    except Exception:
+                        pass
+
+                if (cur_sl is None or trail_stop > float(cur_sl)) and trail_stop < float(price):
+                    ok = await self.exchange.set_stop_loss(sym, trail_stop, side="long")
+                    if ok:
                         pos["current_sl"] = trail_stop
-                        logger.info(f"🔧 Trailing SL moved up for {sym} -> {trail_stop:.6f}")
 
             elif side in ("sell", "short"):
-                # Track trough
-                base = entry if entry > 0 else price
-                try:
-                    trough = float(pos.get("trough", base))
-                except Exception:
-                    trough = base
-                trough = min(trough, price)
-                pos["trough"] = trough
+                base = entry or price or 0.0
+                pos["trough"] = min(float(pos.get("trough", base)), float(price))
+                down_pct = ((entry - pos["trough"]) / entry * 100.0) if entry else 0.0
 
-                # Breakeven for shorts
-                down_pct = ((entry - trough) / entry * 100.0) if entry else 0.0
+                # breakeven for shorts
                 if not pos.get("breakeven_set", False) and down_pct >= breakeven_at and entry:
-                    new_sl = min(float(pos.get("sl") or 1e18), entry)
-                    if (cur_sl_f is None or new_sl < cur_sl_f) and new_sl > price:
-                        if await self.exchange.set_stop_loss(sym, new_sl):
-                            pos["current_sl"] = new_sl
-                            pos["breakeven_set"] = True
-                            logger.info(f"🟢 Breakeven set for {sym} (SHORT) @ {new_sl:.6f}")
+                    desired = min(float(pos.get("sl") or 1e18), float(entry))
+                    ok = await self.exchange.set_stop_loss(sym, desired, side="short")
+                    if ok:
+                        pos["current_sl"] = desired
+                        pos["breakeven_set"] = True
 
-                # Trailing from trough by trail_pct
-                trail_stop = trough * (1 + trail_pct / 100.0)
-                if tp_f is not None:
-                    trail_stop = max(trail_stop, tp_f)  # never trail beyond TP (below for shorts)
-                if (cur_sl_f is None or trail_stop < cur_sl_f) and trail_stop > price:
-                    if await self.exchange.set_stop_loss(sym, trail_stop):
+                # trail from trough
+                trail_stop = float(pos["trough"]) * (1 + trail_pct / 100.0)
+                if tp is not None:
+                    try:
+                        trail_stop = max(trail_stop, float(tp))
+                    except Exception:
+                        pass
+
+                if (cur_sl is None or trail_stop < float(cur_sl)) and trail_stop > float(price):
+                    ok = await self.exchange.set_stop_loss(sym, trail_stop, side="short")
+                    if ok:
                         pos["current_sl"] = trail_stop
-                        logger.info(f"🔧 Trailing SL moved down for {sym} (SHORT) -> {trail_stop:.6f}")
 
 
     # ---------- Main loop ----------

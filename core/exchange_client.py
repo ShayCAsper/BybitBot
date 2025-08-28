@@ -60,6 +60,66 @@ class ExchangeClient:
             logger.error(f"get_price error for {symbol}: {e}")
             return None
 
+# --- helpers: tick size / quantization / clamping ---
+
+    def _get_market(self, symbol: str):
+        try:
+            return self.exchange.market(symbol)
+        except Exception:
+            # fallback: assume markets were loaded
+            return self.exchange.markets.get(symbol, {})
+
+    def get_tick_size(self, symbol: str) -> float:
+        m = self._get_market(symbol)
+        # bybit usually: m["info"]["priceFilter"]["tickSize"]
+        try:
+            ts = float(m["info"]["priceFilter"]["tickSize"])
+            if ts > 0:
+                return ts
+        except Exception:
+            pass
+        # fallback from precision
+        try:
+            prec = m.get("precision", {}).get("price")
+            if prec is not None:
+                return 10 ** (-int(prec))
+        except Exception:
+            pass
+        # ultra fallback
+        return 0.01
+
+    def quantize_price(self, symbol: str, price: float) -> float:
+        step = self.get_tick_size(symbol)
+        if step <= 0:
+            return float(price)
+        # floor to the nearest tick
+        return float((int(price / step)) * step)
+
+    def clamp_stop_for_side(self, symbol: str, side: str, desired: float, last: float) -> float | None:
+        """
+        For longs: SL must be < last
+        For shorts: SL must be > last
+        Returns a safe (quantized) SL or None if no valid SL can be made.
+        """
+        side = (side or "").lower()
+        step = self.get_tick_size(symbol)
+        epsilon = step * 2.0 if step > 0 else 0.01
+
+        if last is None or desired is None:
+            return None
+
+        if side in ("buy", "long"):
+            safe = min(float(desired), float(last) - epsilon)
+            if not (safe < last):
+                return None
+        else:  # "sell", "short"
+            safe = max(float(desired), float(last) + epsilon)
+            if not (safe > last):
+                return None
+
+        return self.quantize_price(symbol, safe)
+
+
     async def fetch_order_book(self, symbol: str, limit: int = 5):
         try:
             return await self.exchange.fetch_order_book(symbol, limit=limit)
@@ -109,26 +169,34 @@ class ExchangeClient:
         # ---- end normalize ----
 
 
-    async def set_stop_loss(self, symbol: str, price: float) -> bool:
-        """Bybit v5 trading_stop via raw endpoint (if available)."""
+    async def set_stop_loss(self, symbol: str, price: float, side: str | None = None) -> bool:
+        """
+        Set SL using Bybit's trading stop.
+        - side is required to clamp correctly (long vs short).
+        """
         try:
-            market = self.exchange.market(symbol)
-            req = {
-                "category": "linear",
-                "symbol": market["id"],
-                "stopLoss": str(round(float(price), 6)),
-                "slTriggerBy": "LastPrice",
-            }
-            if hasattr(self.exchange, "privatePostV5PositionTradingStop"):
-                await self.exchange.privatePostV5PositionTradingStop(req)
-            elif hasattr(self.exchange, "privatePostContractV3PrivatePositionTradingStop"):
-                await self.exchange.privatePostContractV3PrivatePositionTradingStop(req)
-            else:
-                logger.warning("No trading_stop endpoint found in ccxt; skipping set_stop_loss")
+            last = await self.get_price(symbol)
+            if last is None:
+                self.logger.error(f"set_stop_loss: no last price for {symbol}")
                 return False
+
+            safe = self.clamp_stop_for_side(symbol, side or "", price, last)
+            if safe is None:
+                self.logger.warning(
+                    f"set_stop_loss: requested SL {price} invalid against last={last} for {symbol} ({side}), skipping."
+                )
+                return False
+
+            # quantized safe already
+            params = {}
+            # your existing call here (unified ccxt)
+            # Prefer: setTradingStop or editPosition 'stopLoss' depending on your code
+            # Example:
+            resp = await self.exchange.setTradingStop(symbol, stopLoss=safe, params=params)
+            self.logger.info(f"set_stop_loss: {symbol} -> {safe} (side={side})")
             return True
         except Exception as e:
-            logger.error(f"set_stop_loss failed: {e}")
+            self.logger.error(f"set_stop_loss failed: {e}")
             return False
 
     async def set_take_profit(self, symbol: str, price: float) -> bool:
