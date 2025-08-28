@@ -70,19 +70,30 @@ async def initialize(args) -> BotManager:
 
 
 async def run_bot(args):
-    bot = await initialize(args)
+    bot = None
     try:
-        await bot.start()  # enters trading loop
+        bot = await initialize(args)   # builds exchange + bot
+        await bot.start()              # enters trading loop
     except asyncio.CancelledError:
         pass
+    except KeyboardInterrupt:
+        print("\n^C detected — shutting down...")
     finally:
-        await bot.stop()
-
+        # graceful cleanup
+        try:
+            if bot:
+                await bot.stop()
+            # also close exchange if your BotManager doesn't do it inside stop()
+            if bot and getattr(bot, "exchange", None):
+                try:
+                    await bot.exchange.close()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     args = parse_args()
-
-    # Banner
     print(
         "\n"
         "    ╔══════════════════════════════════════════╗\n"
@@ -91,8 +102,8 @@ if __name__ == "__main__":
         "    ║                                          ║\n"
         f"    ║  Preset: {args.preset:<28}║\n"
         f"    ║  Trailing: {args.trailing:<26}║\n"
-        "    ╚══════════════════════════════════════════╝\n"
-    )
-
-    # Windows & Py3.11 are fine; if needed, you can set a policy here.
-    asyncio.run(run_bot(args))
+        "    ╚══════════════════════════════════════════╝\n")
+    try:
+        asyncio.run(run_bot(args))
+    except KeyboardInterrupt:
+        print("\n^C — exit.")

@@ -38,21 +38,59 @@ class StrategyManager:
                 logger.error(f"Strategy init failed for {name}: {e}")
         return reg
 
-    async def generate_proposals(self, market_data: Dict[str, Any], predictions: Optional[Dict[str, Any]] = None, only_strategies: Optional[List[str]] = None) -> List[Proposal]:
+    async def generate_proposals(
+        self,
+        market_data: Dict[str, Any],
+        predictions: Optional[Dict[str, Any]] = None,
+        only_strategies: Optional[List[str]] = None,
+    ) -> List[Proposal]:
+        """
+        Runs each active strategy, logs how many proposals it produced,
+        and returns a flat list of Proposal objects.
+        """
         names = self.active_names if not only_strategies else [n for n in only_strategies if n in self.active_names]
         proposals: List[Proposal] = []
+
         for name in names:
             strat = self.registry.get(name)
             if not strat:
+                logger.debug(f"🧠 {name}: not initialized, skipping")
                 continue
+
             try:
-                for s in await strat.scan(market_data, predictions or {}):
-                    proposals.append(Proposal(
-                        symbol=s["symbol"], side=s["side"], entry=s["entry"], stop=s["stop"], take=s["take"],
-                        strategy=name, confidence=s.get("confidence", 0.6),
-                        exp_edge_bps=s.get("edge_bps", 2.0), exp_rr=s.get("rr", 1.0),
-                        cost_bps=s.get("cost_bps", 2.0), qty=s.get("quantity"), meta=s.get("meta")
-                    ))
+                raw_list = await strat.scan(market_data, predictions or {})
+                count = len(raw_list or [])
+                if count:
+                    # small preview like: "BTC/USDT:USDT:BUY, ETH/USDT:USDT:SELL"
+                    preview = ", ".join(
+                        f"{r.get('symbol','?')}:{str(r.get('side','')).upper()}"
+                        for r in (raw_list[:4] if raw_list else [])
+                    )
+                    logger.info(f"🧠 {name}: {count} proposals -> {preview}")
+                else:
+                    logger.debug(f"🧠 {name}: 0 proposals")
+
+                # Map raw dicts -> Proposal objects
+                for s in raw_list or []:
+                    proposals.append(
+                        Proposal(
+                            symbol=s["symbol"],
+                            side=s["side"],
+                            entry=s["entry"],
+                            stop=s["stop"],
+                            take=s["take"],
+                            strategy=name,
+                            confidence=s.get("confidence", 0.6),
+                            exp_edge_bps=s.get("edge_bps", 2.0),
+                            exp_rr=s.get("rr", 1.0),
+                            cost_bps=s.get("cost_bps", 2.0),
+                            qty=s.get("quantity"),
+                            meta=s.get("meta"),
+                        )
+                    )
             except Exception as e:
-                logger.error(f"Strategy '{name}' failed: {e}")
+                logger.error(f"Strategy '{name}' failed during scan: {e}")
+
+        logger.info(f"📦 Total proposals this loop: {len(proposals)}")
         return proposals
+

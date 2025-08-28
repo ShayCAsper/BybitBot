@@ -1,7 +1,10 @@
 import os, time, asyncio, json
 from typing import Any, Dict, Optional, List, Tuple
 from loguru import logger
+#from typing import Optional
 import ccxt.async_support as ccxt  # async ccxt
+
+
 
 class ExchangeClient:
     """
@@ -81,6 +84,30 @@ class ExchangeClient:
 
     async def create_limit_order(self, symbol, side, amount, price, params=None):
         return await self.exchange.create_order(symbol, "limit", side, amount, price, params or {})
+    
+        # ---- Normalize quantity to exchange limits/precision ----
+        try:
+            market = self.exchange.market(symbol)
+        except Exception:
+            market = None
+
+        try:
+            # Clamp to min amount if available
+            min_amt = None
+            if market:
+                min_amt = ((market.get("limits") or {}).get("amount") or {}).get("min")
+            if min_amt is not None:
+                min_amt = float(min_amt)
+                if quantity < min_amt:
+                    logger.warning(f"Clamping qty from {quantity} -> min {min_amt} for {symbol}")
+                    quantity = min_amt
+
+            # Round to exchange precision (ccxt helper)
+            quantity = float(self.exchange.amount_to_precision(symbol, quantity))
+        except Exception as _e:
+            logger.debug(f"qty normalize skipped for {symbol}: {_e}")
+        # ---- end normalize ----
+
 
     async def set_stop_loss(self, symbol: str, price: float) -> bool:
         """Bybit v5 trading_stop via raw endpoint (if available)."""
@@ -382,3 +409,37 @@ class ExchangeClient:
         except Exception as e:
             logger.error(f"place_order_with_sl_tp fatal error: {e}")
             return None
+            
+        
+   
+    async def fetch_realized_pnl(self, symbol: str, since_ms: Optional[int] = None) -> float:
+        """
+        Sum realized PnL from your trades on `symbol` since `since_ms` (epoch ms).
+        Works on Bybit via ccxt v5 (unified). Returns 0.0 if nothing found.
+        """
+        realized = 0.0
+        try:
+            trades = await self.exchange.fetch_my_trades(
+                symbol,
+                since=since_ms,
+                limit=200,
+                params={"category": "linear"}  # important for Bybit unified
+            )
+            for t in trades or []:
+                info = t.get("info") or {}
+                pnl = (
+                    info.get("execPnl")
+                    or info.get("closedPnl")
+                    or info.get("realisedPnl")
+                    or t.get("pnl")
+                )
+                if pnl is not None:
+                    try:
+                        realized += float(pnl)
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.debug(f"fetch_realized_pnl error for {symbol}: {e}")
+        return realized
+ 
+                
