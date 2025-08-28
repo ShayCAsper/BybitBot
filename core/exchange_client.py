@@ -479,35 +479,53 @@ class ExchangeClient:
             return None
             
         
-   
-    async def fetch_realized_pnl(self, symbol: str, since_ms: Optional[int] = None) -> float:
+    async def fetch_realized_pnl(self, symbol: str, since_ms: int | None = None) -> float | None:
         """
-        Sum realized PnL from your trades on `symbol` since `since_ms` (epoch ms).
-        Works on Bybit via ccxt v5 (unified). Returns 0.0 if nothing found.
+        Compute realized PnL for `symbol` using fills since `since_ms`.
+        Works by summing SELL proceeds - BUY costs - fees.
+        Returns None if it cannot determine a flat-close (i.e., net position ≠ 0 over the window).
         """
-        realized = 0.0
         try:
-            trades = await self.exchange.fetch_my_trades(
-                symbol,
-                since=since_ms,
-                limit=200,
-                params={"category": "linear"}  # important for Bybit unified
-            )
-            for t in trades or []:
-                info = t.get("info") or {}
-                pnl = (
-                    info.get("execPnl")
-                    or info.get("closedPnl")
-                    or info.get("realisedPnl")
-                    or t.get("pnl")
-                )
-                if pnl is not None:
-                    try:
-                        realized += float(pnl)
-                    except Exception:
-                        pass
+            # category=linear for USDT perps on Bybit v5
+            params = {"category": "linear"}
+            trades = await self.exchange.fetch_my_trades(symbol, since=since_ms, limit=200, params=params)
         except Exception as e:
-            logger.debug(f"fetch_realized_pnl error for {symbol}: {e}")
-        return realized
- 
+            # keep silent in production; log if you like:
+            # logger.debug(f"fetch_realized_pnl: fetch_my_trades failed: {e}")
+            return None
+
+        if not trades:
+            return None
+
+        buy_qty = 0.0
+        sell_qty = 0.0
+        buy_cost = 0.0
+        sell_cost = 0.0
+        total_fee = 0.0
+
+        for t in trades:
+            side = (t.get("side") or "").lower()
+            amt = float(t.get("amount") or 0.0)
+            cost = float(t.get("cost") or 0.0)
+
+            if side == "buy":
+                buy_qty += amt
+                buy_cost += cost
+            elif side == "sell":
+                sell_qty += amt
+                sell_cost += cost
+
+            fee_obj = t.get("fee") or {}
+            try:
+                total_fee += float(fee_obj.get("cost") or 0.0)
+            except Exception:
+                pass
+
+        # Only report realized PnL if the window nets to flat (position fully closed)
+        if abs(sell_qty - buy_qty) > 1e-9:
+            return None
+
+        realized = sell_cost - buy_cost - total_fee
+        return float(realized)
+   
                 
