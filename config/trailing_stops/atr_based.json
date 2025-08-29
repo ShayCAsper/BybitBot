@@ -1,0 +1,11 @@
+{
+  "trailing_stop": {
+    "enabled": true,
+    "type": "atr",
+    "atr_multiplier": 2.0,
+    "activation_profit": 0.01,
+    "step": 0.001,
+    "breakeven_enabled": true,
+    "breakeven_trigger": 0.005
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "strategies": {
+    "active": ["mean_reversion"],
+    "mean_reversion": {
+      "enabled": true,
+      "lookback": 20,
+      "std_threshold": 2.0,
+      "base_position_size": 0.01
+    }
+  },
+  "risk": {
+    "max_position_size": 0.03,
+    "risk_per_trade": 0.01,
+    "max_positions": 3
+  }
+}

@@ -1,0 +1,57 @@
+{
+    "name": "Advanced Scalping Strategy",
+    "description": "High-frequency scalping with multiple sub-strategies",
+    "strategies": {
+        "active": ["advanced_scalping"],
+        "advanced_scalping": {
+            "enabled": true,
+            "min_spread": 0.00005,
+            "max_spread": 0.0002,
+            "spread_entry_ratio": 0.3,
+            "imbalance_threshold": 0.65,
+            "depth_levels": 20,
+            "volume_multiplier": 2.0,
+            "liquidity_threshold": 50000,
+            "ma_period": 20,
+            "gap_threshold": 0.0015,
+            "gap_close_target": 0.5,
+            "momentum_filter": true,
+            "max_position_time": 300,
+            "quick_profit": 0.0015,
+            "tight_stop": 0.001
+        },
+        "scalping": {
+            "enabled": false
+        },
+        "momentum": {
+            "enabled": false
+        },
+        "mean_reversion": {
+            "enabled": false
+        },
+        "ml": {
+            "enabled": false
+        }
+    },
+    "risk": {
+        "max_position_size": 0.02,
+        "stop_loss_pct": 0.001,
+        "take_profit_pct": 0.0015,
+        "max_daily_loss": 0.05,
+        "max_positions": 2,
+        "position_sizing": "fixed",
+        "base_position_value": 100,
+        "trailing_stop": {
+            "enabled": true,
+            "type": "percentage",
+            "distance": 0.005,
+            "activation": 0.001,
+            "breakeven_enabled": true,
+            "breakeven_trigger": 0.0005
+        }
+    },
+    "coins": ["BTC", "ETH", "SOL"],
+    "exchange": {
+        "symbols": ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"]
+    }
+}

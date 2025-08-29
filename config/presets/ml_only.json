@@ -1,0 +1,15 @@
+{
+  "strategies": {
+    "active": ["ml"],
+    "ml": {
+      "enabled": true,
+      "confidence_threshold": 0.7,
+      "base_position_size": 0.02
+    }
+  },
+  "risk": {
+    "max_position_size": 0.1,
+    "risk_per_trade": 0.02,
+    "max_positions": 5
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "scalping_coins": {
+    "description": "High liquidity, tight spreads",
+    "coins": ["BTC", "ETH"],
+    "reasons": "Best for quick in/out trades"
+  },
+  
+  "momentum_coins": {
+    "description": "High volatility, strong trends",
+    "coins": ["SOL", "DOGE", "AVAX"],
+    "reasons": "Big moves for momentum strategy"
+  },
+  
+  "safe_coins": {
+    "description": "Stable, predictable",
+    "coins": ["BTC", "ETH", "BNB"],
+    "reasons": "Lower risk, steady gains"
+  },
+  
+  "degen_coins": {
+    "description": "High risk, high reward",
+    "coins": ["PEPE", "WIF", "BONK", "FLOKI"],
+    "reasons": "Massive pumps possible"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "strategies": {
+    "active": ["momentum"],
+    "momentum": {
+      "enabled": true,
+      "lookback_short": 10,
+      "lookback_long": 30,
+      "momentum_threshold": 0.02,
+      "base_position_size": 0.02
+    }
+  },
+  "risk": {
+    "max_position_size": 0.1,
+    "risk_per_trade": 0.02,
+    "max_positions": 5
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "strategy_coins": {
+    "scalping": {
+      "description": "High liquidity, tight spreads required",
+      "coins": ["BTC", "ETH"],
+      "min_volume_24h": 1000000000,
+      "max_spread": 0.001,
+      "reasons": "These coins have the highest liquidity and tightest spreads"
+    },
+    
+    "momentum": {
+      "description": "High volatility for momentum trades",
+      "coins": ["SOL", "DOGE", "AVAX", "MATIC"],
+      "min_volatility": 0.03,
+      "preferred_market_cap_rank": [10, 50],
+      "reasons": "These coins show strong directional moves"
+    },
+    
+    "mean_reversion": {
+      "description": "Stable coins that revert to mean",
+      "coins": ["BTC", "ETH", "BNB"],
+      "max_volatility": 0.05,
+      "min_correlation_with_btc": 0.6,
+      "reasons": "These coins have predictable ranges"
+    },
+    
+    "ml": {
+      "description": "Coins with good data for ML",
+      "coins": ["BTC", "ETH"],
+      "min_data_points": 10000,
+      "reasons": "Best historical data availability"
+    }
+  },
+  
+  "coin_profiles": {
+    "BTC": {
+      "best_for": ["scalping", "mean_reversion", "ml"],
+      "avoid_for": [],
+      "characteristics": "Highest liquidity, most stable"
+    },
+    "ETH": {
+      "best_for": ["scalping", "mean_reversion", "ml"],
+      "avoid_for": [],
+      "characteristics": "High liquidity, follows BTC"
+    },
+    "SOL": {
+      "best_for": ["momentum"],
+      "avoid_for": ["scalping"],
+      "characteristics": "High volatility, strong trends"
+    },
+    "DOGE": {
+      "best_for": ["momentum"],
+      "avoid_for": ["mean_reversion"],
+      "characteristics": "Meme coin, unpredictable spikes"
+    },
+    "BNB": {
+      "best_for": ["mean_reversion"],
+      "avoid_for": ["momentum"],
+      "characteristics": "Exchange token, stable ranges"
+    }
+  }
+}

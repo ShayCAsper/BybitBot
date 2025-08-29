@@ -1,0 +1,12 @@
+{
+  "trailing_stop": {
+    "enabled": true,
+    "type": "percentage",
+    "distance": 0.02,
+    "activation_profit": 0.01,
+    "step": 0.001,
+    "breakeven_enabled": true,
+    "breakeven_trigger": 0.005,
+    "partial_close_enabled": false
+  }
+}

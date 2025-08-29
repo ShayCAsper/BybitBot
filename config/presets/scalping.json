@@ -1,0 +1,17 @@
+{
+  "strategies": {
+    "active": ["scalping"],
+    "scalping": {
+      "enabled": true,
+      "min_spread": 0.0001,  
+      "max_spread": 0.001,
+      "timeframe": "1m",
+      "base_position_size": 0.01
+    }
+  },
+  "risk": {
+    "max_position_size": 0.05,
+    "risk_per_trade": 0.01,
+    "max_positions": 10
+  }
+}
